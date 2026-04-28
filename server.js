@@ -129,8 +129,8 @@ wss.on('connection', (twilioWs, req) => {
     // Send initial greeting after session is configured
     setTimeout(() => {
       const greeting = callDir === 'outbound' && leadName
-        ? `You are calling ${leadName} about Aurelia Method. They submitted interest through the website or were referred. Start by introducing yourself as Morgan from Aurelia Method, reference that they showed interest in the transformation program, and ask what their main goal is.`
-        : `Someone just called Aurelia Method's number. Greet them warmly, introduce yourself as Morgan from Aurelia Method, and ask what you can help them with today.`;
+        ? `You are calling ${leadName} about Aurelia Method. They submitted interest through the website or were referred. Start by introducing yourself as Aria from Aurelia Method, reference that they showed interest in the transformation program, and ask what their main goal is.`
+        : `Someone just called Aurelia Method's number. Greet them warmly, introduce yourself as Aria from Aurelia Method, and ask what you can help them with today.`;
 
       grokWs.send(JSON.stringify({
         type: 'conversation.item.create',
