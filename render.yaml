@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: aurelia-voice-agent
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: XAI_API_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SENDGRID_FROM_EMAIL
+        sync: false
+      - key: STRIPE_LINK_30DAY
+        sync: false
+      - key: STRIPE_LINK_60DAY
+        sync: false
+      - key: STRIPE_LINK_90DAY
+        sync: false
+      - key: NODE_ENV
+        value: production
