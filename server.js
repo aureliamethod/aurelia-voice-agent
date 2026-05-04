@@ -42,6 +42,37 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+// ─── Supabase singleton (used by telemetry + tool handlers) ──────────────────
+const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null;
+if (!supabase) console.warn('Supabase not configured — telemetry disabled');
+
+// ─── Telemetry helpers (best-effort, never throw) ────────────────────────────
+// `vapi_call_id` is the legacy column name; we store the Twilio streamSid here.
+async function logAriaEvent(eventType, streamSid, phone, eventData = {}) {
+  if (!supabase) return;
+  try {
+    await supabase.from('aria_call_events').insert({
+      vapi_call_id: streamSid || null,
+      phone:        phone     || null,
+      event_type:   eventType,
+      event_data:   eventData,
+    });
+  } catch (err) { console.warn(`telemetry insert failed (${eventType}):`, err.message); }
+}
+
+async function setLeadAriaStatus(phone, status, errorMsg = null) {
+  if (!supabase || !phone) return;
+  try {
+    await supabase.from('leads').update({
+      aria_call_status:       status,
+      aria_call_triggered_at: new Date().toISOString(),
+      aria_call_error:        errorMsg,
+    }).eq('phone', phone);
+  } catch (err) { console.warn(`lead status update failed (${status}):`, err.message); }
+}
+
 // ─── HEALTH CHECK ──────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'Aurelia Method Voice Agent', model: 'grok-voice-think-fast-1.0' });
@@ -95,6 +126,7 @@ wss.on('connection', (twilioWs, req) => {
   let callDir      = 'inbound';
   let sessionReady = false;
   const audioQueue = [];    // buffer audio before grok session is ready
+  const callStartedAt = Date.now();
 
   // Open Grok Voice WebSocket — URL confirmed from xAI quickstart
   grokWs = new WebSocket(
@@ -142,6 +174,7 @@ wss.on('connection', (twilioWs, req) => {
       }));
       grokWs.send(JSON.stringify({ type: 'response.create' }));
       sessionReady = true;
+      logAriaEvent('session_ready', streamSid, callerPhone, { dir: callDir, lead_name: leadName });
 
       // Flush queued audio
       audioQueue.forEach(audioMsg => {
@@ -169,17 +202,26 @@ wss.on('connection', (twilioWs, req) => {
 
       // Handle tool calls
       case 'response.function_call_arguments.done':
-        await handleToolCall(msg, grokWs, callerPhone, leadName);
+        await handleToolCall(msg, grokWs, callerPhone, leadName, streamSid);
         break;
 
       case 'error':
         console.error('Grok error:', msg.error);
+        logAriaEvent('grok_error', streamSid, callerPhone, { error: msg.error });
+        setLeadAriaStatus(callerPhone, 'error', JSON.stringify(msg.error).slice(0, 500));
         break;
     }
   });
 
-  grokWs.on('close', () => console.log('Grok WebSocket closed'));
-  grokWs.on('error', (err) => console.error('Grok WebSocket error:', err.message));
+  grokWs.on('close', () => {
+    console.log('Grok WebSocket closed');
+    logAriaEvent('grok_closed', streamSid, callerPhone, {});
+  });
+  grokWs.on('error', (err) => {
+    console.error('Grok WebSocket error:', err.message);
+    logAriaEvent('grok_error', streamSid, callerPhone, { error: err.message });
+    setLeadAriaStatus(callerPhone, 'error', err.message);
+  });
 
   // ── Twilio → Grok ──────────────────────────────────────────────────────
   twilioWs.on('message', (data) => {
@@ -192,6 +234,8 @@ wss.on('connection', (twilioWs, req) => {
         leadName    = msg.start.customParameters?.lead_name    || null;
         callDir     = msg.start.customParameters?.call_direction || 'inbound';
         console.log(`Stream started: ${streamSid} | caller: ${callerPhone} | dir: ${callDir}`);
+        logAriaEvent('call_started', streamSid, callerPhone, { dir: callDir, lead_name: leadName });
+        setLeadAriaStatus(callerPhone, 'in_progress');
         break;
 
       case 'media':
@@ -218,13 +262,20 @@ wss.on('connection', (twilioWs, req) => {
   twilioWs.on('close', () => {
     console.log('Twilio WebSocket disconnected');
     if (grokWs?.readyState === WebSocket.OPEN) grokWs.close();
+    const durationMs = Date.now() - callStartedAt;
+    logAriaEvent('call_ended', streamSid, callerPhone, { duration_ms: durationMs, dir: callDir });
+    setLeadAriaStatus(callerPhone, 'ended');
   });
 
-  twilioWs.on('error', (err) => console.error('Twilio WebSocket error:', err.message));
+  twilioWs.on('error', (err) => {
+    console.error('Twilio WebSocket error:', err.message);
+    logAriaEvent('twilio_error', streamSid, callerPhone, { error: err.message });
+    setLeadAriaStatus(callerPhone, 'error', err.message);
+  });
 });
 
 // ─── TOOL CALL HANDLER ──────────────────────────────────────────────────────
-async function handleToolCall(msg, grokWs, callerPhone, leadName) {
+async function handleToolCall(msg, grokWs, callerPhone, leadName, streamSid) {
   const callId = msg.call_id;
   const fnName = msg.name;
   let args;
@@ -238,6 +289,8 @@ async function handleToolCall(msg, grokWs, callerPhone, leadName) {
   } else if (fnName === 'log_lead') {
     result = await logLead(args, callerPhone);
   }
+
+  logAriaEvent('tool_called', streamSid, callerPhone, { fn: fnName, args, result });
 
   // Return result to Grok
   grokWs.send(JSON.stringify({
@@ -318,10 +371,7 @@ async function sendStripeLink({ phone, tier, name, email }) {
 // ─── LOG LEAD TO SUPABASE ────────────────────────────────────────────────────
 async function logLead({ name, phone, interest_level, protocol_interest, notes, callback_requested }, callerPhone) {
   try {
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    );
+    if (!supabase) return { success: false, error: 'Supabase not configured' };
 
     const { error } = await supabase.from('leads').upsert({
       full_name:           name || null,

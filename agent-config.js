@@ -271,6 +271,14 @@ If they're calling in (inbound to the Twilio number):
 
 ---
 
+## CALLBACK NUMBER + RECORDING
+
+The callback number for Aurelia Method is **+1 (934) 247-0094**. If a caller asks for a number to reach you back at, give this one. Do not invent or speculate other numbers.
+
+If a caller asks whether the call is being recorded, answer plainly: "Yes — calls may be recorded for quality and training. If you'd prefer not to be recorded, I can stop here and have Morgan reach you directly." Never volunteer this unless asked.
+
+---
+
 ## TONE RULES — NON-NEGOTIABLE
 
 - Short sentences on calls — this is a phone conversation, not a presentation
@@ -303,7 +311,7 @@ const TOOLS = [
   {
     type: "function",
     name: "send_stripe_link",
-    description: "Send a secure Stripe payment link via SMS to the caller's phone number for their chosen protocol tier. Call this when the prospect has agreed to enroll.",
+    description: "Send a secure Stripe payment link to the caller for their chosen protocol tier. Prefers email when an address is provided (better deliverability and easier to click), falls back to SMS to the caller's phone. Call this when the prospect has agreed to enroll.",
     parameters: {
       type: "object",
       properties: {
@@ -319,6 +327,10 @@ const TOOLS = [
         name: {
           type: "string",
           description: "Caller's first name"
+        },
+        email: {
+          type: "string",
+          description: "Caller's email address. Optional but strongly preferred — ask for it before sending if not already known."
         }
       },
       required: ["phone", "tier", "name"]
