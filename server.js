@@ -73,6 +73,16 @@ async function setLeadAriaStatus(phone, status, errorMsg = null) {
   } catch (err) { console.warn(`lead status update failed (${status}):`, err.message); }
 }
 
+// XML-escape helper — prevents injection if lead_name or lead_id contain &, <, >, ".
+function xmlEscape(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 // ─── HEALTH CHECK ──────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'Aurelia Method Voice Agent', model: 'grok-voice-think-fast-1.0' });
@@ -80,7 +90,7 @@ app.get('/', (req, res) => {
 
 // ─── INBOUND CALL WEBHOOK (Twilio calls this when someone calls your number) ─
 app.post('/incoming', (req, res) => {
-  const callerPhone = req.body.From || 'unknown';
+  const callerPhone = xmlEscape(req.body.From || 'unknown');
   console.log(`Inbound call from ${callerPhone}`);
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -98,8 +108,10 @@ app.post('/incoming', (req, res) => {
 
 // ─── OUTBOUND CALL WEBHOOK (Twilio calls this when we initiate an outbound call)─
 app.post('/outbound-stream', (req, res) => {
-  const callerPhone = req.body.To || 'unknown';
-  const leadName    = req.query.lead_name || '';
+  const callerPhone = xmlEscape(req.body.To || 'unknown');
+  const leadName    = xmlEscape(req.query.lead_name || req.body.lead_name || '');
+  const leadId      = xmlEscape(req.query.lead_id   || req.body.lead_id   || '');
+  console.log(`Outbound stream → callee=${callerPhone}, lead_name="${leadName}", lead_id=${leadId}`);
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -107,6 +119,7 @@ app.post('/outbound-stream', (req, res) => {
     <Stream url="wss://${req.headers.host}/stream">
       <Parameter name="caller_phone" value="${callerPhone}"/>
       <Parameter name="lead_name" value="${leadName}"/>
+      <Parameter name="lead_id" value="${leadId}"/>
       <Parameter name="call_direction" value="outbound"/>
     </Stream>
   </Connect>
@@ -123,6 +136,7 @@ wss.on('connection', (twilioWs, req) => {
   let streamSid    = null;
   let callerPhone  = null;
   let leadName     = null;
+  let leadId       = null;
   let callDir      = 'inbound';
   let sessionReady = false;
   const audioQueue = [];    // buffer audio before grok session is ready
@@ -174,7 +188,7 @@ wss.on('connection', (twilioWs, req) => {
       }));
       grokWs.send(JSON.stringify({ type: 'response.create' }));
       sessionReady = true;
-      logAriaEvent('session_ready', streamSid, callerPhone, { dir: callDir, lead_name: leadName });
+      logAriaEvent('session_ready', streamSid, callerPhone, { dir: callDir, lead_name: leadName, lead_id: leadId });
 
       // Flush queued audio
       audioQueue.forEach(audioMsg => {
@@ -232,9 +246,10 @@ wss.on('connection', (twilioWs, req) => {
         streamSid   = msg.start.streamSid;
         callerPhone = msg.start.customParameters?.caller_phone || null;
         leadName    = msg.start.customParameters?.lead_name    || null;
+        leadId      = msg.start.customParameters?.lead_id      || null;
         callDir     = msg.start.customParameters?.call_direction || 'inbound';
-        console.log(`Stream started: ${streamSid} | caller: ${callerPhone} | dir: ${callDir}`);
-        logAriaEvent('call_started', streamSid, callerPhone, { dir: callDir, lead_name: leadName });
+        console.log(`Stream started: ${streamSid} | caller: ${callerPhone} | lead_id: ${leadId} | dir: ${callDir}`);
+        logAriaEvent('call_started', streamSid, callerPhone, { dir: callDir, lead_name: leadName, lead_id: leadId });
         setLeadAriaStatus(callerPhone, 'in_progress');
         break;
 
