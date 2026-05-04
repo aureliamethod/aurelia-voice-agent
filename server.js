@@ -288,6 +288,8 @@ async function handleToolCall(msg, grokWs, callerPhone, leadName, streamSid) {
     result = await sendStripeLink(args);
   } else if (fnName === 'log_lead') {
     result = await logLead(args, callerPhone);
+  } else if (fnName === 'schedule_callback') {
+    result = await scheduleCallback(args, callerPhone);
   }
 
   logAriaEvent('tool_called', streamSid, callerPhone, { fn: fnName, args, result });
@@ -364,6 +366,40 @@ async function sendStripeLink({ phone, tier, name, email }) {
 
   } catch (err) {
     console.error('send_stripe_link error:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// ─── SCHEDULE CALLBACK ───────────────────────────────────────────────────────
+// Marks the lead as callback_requested with a target time. The aria-callback-cron
+// Edge Function polls every 5 minutes and redials due callbacks (bypassing the
+// normal 4h/7d cooldown).
+async function scheduleCallback({ phone, callback_at_iso, name, notes, tier_interest }, callerPhone) {
+  try {
+    if (!supabase) return { success: false, error: 'Supabase not configured' };
+    const p = phone || callerPhone;
+    if (!p) return { success: false, error: 'No phone number for callback' };
+    if (!callback_at_iso) return { success: false, error: 'callback_at_iso is required' };
+
+    const update = {
+      phone:                   p,
+      callback_scheduled_at:   callback_at_iso,    // canonical timestamptz used by cron
+      callback_requested_time: callback_at_iso,    // raw text mirror for debugging
+      source:                  'ai_call_agent',
+      last_contact_at:         new Date().toISOString(),
+    };
+    if (name)          update.full_name         = name;
+    if (notes)         update.notes             = notes;
+    if (tier_interest) update.protocol_interest = tier_interest;
+
+    const { error } = await supabase.from('leads').upsert(update, { onConflict: 'phone' });
+    if (error) {
+      console.error('schedule_callback DB error:', error);
+      return { success: false, error: error.message };
+    }
+    return { success: true, scheduled_for: callback_at_iso };
+  } catch (err) {
+    console.error('schedule_callback error:', err.message);
     return { success: false, error: err.message };
   }
 }

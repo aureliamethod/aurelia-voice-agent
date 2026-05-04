@@ -375,6 +375,38 @@ const TOOLS = [
   },
   {
     type: "function",
+    name: "schedule_callback",
+    description: "Lock in a callback at a specific future time. Use when caller asks to be called back later. The cron worker will redial them automatically at that time, bypassing the normal cooldown.",
+    parameters: {
+      type: "object",
+      properties: {
+        phone: {
+          type: "string",
+          description: "Caller's phone number in E.164. Optional — defaults to the caller's phone."
+        },
+        callback_at_iso: {
+          type: "string",
+          description: "ISO-8601 timestamp WITH timezone offset for when to call back, e.g. 2026-05-05T18:00:00-04:00. Pick the next time the caller said they're available."
+        },
+        name: {
+          type: "string",
+          description: "Caller's name, if known"
+        },
+        notes: {
+          type: "string",
+          description: "Why they want a callback, what to follow up on, anything Aria should remember on the next call"
+        },
+        tier_interest: {
+          type: "string",
+          enum: ["30-day", "60-day", "90-day", "undecided"],
+          description: "Protocol they leaned toward, if any"
+        }
+      },
+      required: ["callback_at_iso"]
+    }
+  },
+  {
+    type: "function",
     name: "schedule_consultation",
     description: "Flag a lead for a private consultation (required for 90-day protocol and for any lead who needs Morgan's personal follow-up). Creates a priority flag in the CRM.",
     parameters: {
